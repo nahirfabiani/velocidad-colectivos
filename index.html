@@ -170,16 +170,20 @@ body{
 .crono-display.running{color:var(--amarillo);}
 .crono-display.stopped{color:var(--teal);}
 .crono-sub{font-size:9px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:rgba(255,255,255,0.4);text-align:center;margin-top:2px;}
-.crono-btns{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:0.6rem;}
+.crono-btns{display:flex;justify-content:center;margin-top:0.75rem;}
 .crono-btn{
-  padding:13px;border:none;border-radius:6px;
-  font-family:'Barlow',sans-serif;font-size:13px;font-weight:800;
+  width:120px;height:120px;border-radius:50%;border:4px solid rgba(255,255,255,0.25);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;
+  font-family:'Barlow',sans-serif;font-size:14px;font-weight:800;
   letter-spacing:0.5px;text-transform:uppercase;cursor:pointer;
+  background:var(--amarillo);color:var(--azul);
+  box-shadow:0 4px 14px rgba(0,0,0,0.3);
+  -webkit-tap-highlight-color:transparent;touch-action:manipulation;user-select:none;
+  transition:transform 0.08s,background 0.15s;
 }
-.crono-btn-start{background:var(--amarillo);color:var(--azul);}
-.crono-btn-start:disabled{background:rgba(255,255,255,0.15);color:rgba(255,255,255,0.3);cursor:not-allowed;}
-.crono-btn-stop{background:var(--rojo);color:#fff;}
-.crono-btn-stop:disabled{background:rgba(255,255,255,0.15);color:rgba(255,255,255,0.3);cursor:not-allowed;}
+.crono-btn:active{transform:scale(0.95);}
+.crono-btn .crono-ico{font-size:30px;line-height:1;}
+.crono-btn.running{background:var(--rojo);color:#fff;}
 .crono-reset-btn{
   width:100%;margin-top:6px;padding:6px;border:1px solid rgba(255,255,255,0.2);
   background:transparent;border-radius:4px;font-family:'Barlow',sans-serif;
@@ -390,8 +394,7 @@ body{
         <div class="crono-display" id="crono-display">00.00</div>
         <div class="crono-sub">segundos</div>
         <div class="crono-btns">
-          <button class="crono-btn crono-btn-start" id="btn-iniciar" onclick="cronoIniciar()">&#9654; Iniciar</button>
-          <button class="crono-btn crono-btn-stop" id="btn-parar" onclick="cronoPar()" disabled>&#9646;&#9646; Parar</button>
+          <button class="crono-btn" id="btn-crono" onclick="cronoToggle()"><span class="crono-ico">&#9654;</span><span class="crono-lbl">Iniciar</span></button>
         </div>
         <button class="crono-reset-btn" onclick="cronoReset()">&#8635; Reiniciar</button>
       </div>
@@ -559,11 +562,23 @@ function padMs(ms) {
   return String(secs).padStart(2,'0') + '.' + String(cents).padStart(2,'0');
 }
 
+function setCronoBtn(running) {
+  const btn = document.getElementById('btn-crono');
+  btn.classList.toggle('running', running);
+  btn.querySelector('.crono-ico').innerHTML = running ? '&#9646;&#9646;' : '&#9654;';
+  btn.querySelector('.crono-lbl').textContent = running ? 'Parar' : 'Iniciar';
+}
+
+function cronoToggle() {
+  if (cronoRunning) cronoPar(); else cronoIniciar();
+}
+
 function cronoIniciar() {
   if (cronoRunning) return;
+  // Cada medicion nueva arranca de cero
+  if (cronoFinished) cronoMs = 0;
   cronoRunning = true; cronoFinished = false;
-  document.getElementById('btn-iniciar').disabled = true;
-  document.getElementById('btn-parar').disabled = false;
+  setCronoBtn(true);
   document.getElementById('crono-display').className = 'crono-display running';
   document.getElementById('vel-result').classList.remove('show');
   document.getElementById('btn-guardar').disabled = true;
@@ -578,8 +593,7 @@ function cronoPar() {
   if (!cronoRunning) return;
   clearInterval(cronoInterval);
   cronoRunning = false; cronoFinished = true;
-  document.getElementById('btn-iniciar').disabled = false;
-  document.getElementById('btn-parar').disabled = true;
+  setCronoBtn(false);
   document.getElementById('crono-display').className = 'crono-display stopped';
   tiempoFinal = cronoMs / 100;
   const vel = (sesion.baseMetros / tiempoFinal) * 3.6;
@@ -596,10 +610,10 @@ function cronoReset() {
   cronoMs = 0; tiempoFinal = 0;
   document.getElementById('crono-display').textContent = '00.00';
   document.getElementById('crono-display').className = 'crono-display';
-  document.getElementById('btn-iniciar').disabled = false;
-  document.getElementById('btn-parar').disabled = true;
+  setCronoBtn(false);
   document.getElementById('vel-result').classList.remove('show');
   document.getElementById('btn-guardar').disabled = true;
+  if (updatePendiente) location.reload();
 }
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -701,7 +715,23 @@ function ejecutarReset() {
 window.addEventListener('online',()=>document.getElementById('offline-bar').classList.remove('show'));
 window.addEventListener('offline',()=>document.getElementById('offline-bar').classList.add('show'));
 if(!navigator.onLine) document.getElementById('offline-bar').classList.add('show');
-if('serviceWorker' in navigator) window.addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));
+/* SERVICE WORKER: busca version nueva en cada apertura y recarga cuando se activa */
+let updatePendiente=false;
+if('serviceWorker' in navigator){
+  const habiaSW=!!navigator.serviceWorker.controller;
+  window.addEventListener('load',()=>{
+    navigator.serviceWorker.register('sw.js',{updateViaCache:'none'}).then(reg=>{
+      reg.update();
+      document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')reg.update();});
+    }).catch(()=>{});
+  });
+  navigator.serviceWorker.addEventListener('controllerchange',()=>{
+    if(!habiaSW)return;
+    // No recargar en medio de una medicion: se espera a que el cronometro quede libre
+    if(cronoRunning||cronoFinished){updatePendiente=true;showToast('Nueva version: se aplica al terminar la medicion');}
+    else location.reload();
+  });
+}
 let deferredPrompt=null;
 window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPrompt=e;document.getElementById('install-banner').classList.add('show');});
 async function instalarPWA(){if(!deferredPrompt){alert('iPhone: Compartir → Anadir a pantalla de inicio');return;}deferredPrompt.prompt();const{outcome}=await deferredPrompt.userChoice;if(outcome==='accepted')showToast('App instalada');deferredPrompt=null;document.getElementById('install-banner').classList.remove('show');}
